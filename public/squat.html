@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 실시간 스쿼트 자세 교정 코치 | 온디바이스 모션 분석</title>
+  
+  <!-- MediaPipe Pose & Camera Utils CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+  <style>
+    :root {
+      --bg-dark: #0a0d14;
+      --surface-dark: #121824;
+      --card-border: #1e293b;
+      --accent-neon: #00ff88;
+      --accent-volt: #d2ff00;
+      --warning-red: #ff334b;
+      --warning-orange: #ff9900;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* Header */
+    header {
+      background: rgba(18, 24, 36, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--card-border);
+      padding: 12px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 20;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand-logo {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: var(--accent-volt);
+      color: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 16px;
+    }
+
+    .brand-title {
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+    }
+
+    .brand-badge {
+      font-size: 10px;
+      background: #1e293b;
+      color: var(--accent-neon);
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-family: ui-monospace, monospace;
+      border: 1px solid #334155;
+    }
+
+    /* Main Viewport Container */
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      position: relative;
+    }
+
+    .video-viewport {
+      position: relative;
+      width: 100%;
+      max-width: 960px;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border-radius: 20px;
+      overflow: hidden;
+      border: 1px solid var(--card-border);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+    }
+
+    #webcam-video {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1); /* 거울 모드 */
+    }
+
+    #output-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+
+    /* HUD Elements Overlay */
+    .hud-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 20px;
+      z-index: 10;
+    }
+
+    .hud-top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .metrics-group {
+      display: flex;
+      gap: 12px;
+    }
+
+    .metric-card {
+      background: rgba(18, 24, 36, 0.85);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      padding: 10px 18px;
+      min-width: 110px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    .metric-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 2px;
+    }
+
+    .metric-val {
+      font-size: 28px;
+      font-weight: 900;
+      font-family: ui-monospace, monospace;
+      color: var(--text-main);
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+    }
+
+    .metric-val.volt {
+      color: var(--accent-volt);
+    }
+
+    .metric-unit {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    /* Center Real-Time Dynamic Banner */
+    .feedback-banner {
+      align-self: center;
+      background: rgba(18, 24, 36, 0.9);
+      backdrop-filter: blur(12px);
+      border: 1.5px solid var(--card-border);
+      border-radius: 30px;
+      padding: 10px 28px;
+      font-size: 15px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: all 0.25s ease;
+      color: var(--text-main);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .feedback-banner.success {
+      border-color: var(--accent-neon);
+      background: rgba(0, 255, 136, 0.15);
+      color: var(--accent-neon);
+      box-shadow: 0 0 25px rgba(0, 255, 136, 0.4);
+      transform: scale(1.04);
+    }
+
+    .feedback-banner.warning {
+      border-color: var(--warning-red);
+      background: rgba(255, 51, 75, 0.2);
+      color: #ff6b7e;
+      box-shadow: 0 0 30px rgba(255, 51, 75, 0.5);
+      animation: pulseWarning 0.5s infinite alternate;
+    }
+
+    @keyframes pulseWarning {
+      0% { transform: scale(1); }
+      100% { transform: scale(1.05); }
+    }
+
+    /* HUD Bottom Bar */
+    .hud-bottom-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+
+    .status-pill {
+      background: rgba(18, 24, 36, 0.85);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-muted);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+
+    .status-dot.active {
+      background: var(--accent-neon);
+      box-shadow: 0 0 8px var(--accent-neon);
+    }
+
+    .status-dot.warn {
+      background: var(--warning-red);
+      box-shadow: 0 0 8px var(--warning-red);
+    }
+
+    /* Start / Permissions Modal Overlay */
+    .start-modal {
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 13, 20, 0.88);
+      backdrop-filter: blur(16px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+      z-index: 30;
+      transition: opacity 0.3s ease;
+    }
+
+    .start-modal.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .modal-box {
+      max-width: 440px;
+      width: 100%;
+      background: var(--surface-dark);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      padding: 32px 24px;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7);
+    }
+
+    .modal-icon {
+      width: 60px;
+      height: 60px;
+      border-radius: 16px;
+      background: rgba(210, 255, 0, 0.12);
+      border: 1px solid rgba(210, 255, 0, 0.3);
+      color: var(--accent-volt);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      margin: 0 auto 16px;
+    }
+
+    .modal-title {
+      font-size: 20px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+
+    .modal-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.6;
+      margin-bottom: 24px;
+    }
+
+    .guide-tags {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 24px;
+      text-align: left;
+      font-size: 12px;
+      background: #0a0d14;
+      padding: 12px 16px;
+      border-radius: 12px;
+      border: 1px solid var(--card-border);
+    }
+
+    .guide-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #cbd5e1;
+    }
+
+    .btn-start {
+      width: 100%;
+      background: var(--accent-volt);
+      color: #000;
+      border: none;
+      padding: 14px;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 800;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+      box-shadow: 0 8px 25px rgba(210, 255, 0, 0.3);
+    }
+
+    .btn-start:hover {
+      background: #beec00;
+      transform: translateY(-2px);
+    }
+
+    .btn-start:active {
+      transform: translateY(0);
+    }
+
+    /* Bottom Info Card */
+    .control-deck {
+      margin-top: 16px;
+      width: 100%;
+      max-width: 960px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 20px;
+      background: var(--surface-dark);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .deck-stats {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .stat-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .stat-badge strong {
+      color: var(--text-main);
+      font-family: ui-monospace, monospace;
+    }
+
+    .audio-toggle-btn {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: var(--text-main);
+      padding: 6px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.2s;
+    }
+
+    .audio-toggle-btn:hover {
+      background: #334155;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header -->
+  <header>
+    <div class="brand">
+      <div class="brand-logo">AI</div>
+      <div>
+        <div class="brand-title">SQUAT MOTION COACH</div>
+      </div>
+      <span class="brand-badge">ON-DEVICE AI</span>
+    </div>
+    <div style="font-size: 11px; color: var(--text-muted); font-family: ui-monospace, monospace;">
+      100% PRIVATE · 0-SERVER LATENCY
+    </div>
+  </header>
+
+  <!-- Main Viewport -->
+  <main>
+    <div class="video-viewport">
+      <!-- Hidden/Processed Webcam Stream -->
+      <video id="webcam-video" playsinline></video>
+      <!-- Real-time Skeleton Canvas -->
+      <canvas id="output-canvas"></canvas>
+
+      <!-- Heads-Up Display (HUD) -->
+      <div class="hud-overlay">
+        <!-- Top Metrics Group -->
+        <div class="hud-top-bar">
+          <div class="metrics-group">
+            <div class="metric-card">
+              <div class="metric-label">REPS (카운트)</div>
+              <div class="metric-val volt" id="hud-reps">0</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">무릎 각도</div>
+              <div class="metric-val">
+                <span id="hud-knee-angle">--</span>
+                <span class="metric-unit">°</span>
+              </div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">고관절 각도</div>
+              <div class="metric-val">
+                <span id="hud-hip-angle">--</span>
+                <span class="metric-unit">°</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="metric-card" style="min-width: 130px; text-align: right;">
+            <div class="metric-label">운동 상태</div>
+            <div class="metric-val" id="hud-state" style="font-size: 18px; color: var(--accent-neon);">
+              준비
+            </div>
+          </div>
+        </div>
+
+        <!-- Center Alert / Praise Dynamic Banner -->
+        <div class="feedback-banner" id="feedback-banner">
+          <span>카메라 측면에서 전신을 비춰주세요</span>
+        </div>
+
+        <!-- Bottom Status Bar -->
+        <div class="hud-bottom-bar">
+          <div class="status-pill">
+            <div class="status-dot active" id="tracking-status-dot"></div>
+            <span id="tracking-status-text">관절 트래킹 대기</span>
+          </div>
+          <div class="status-pill" id="target-side-pill">
+            감지 측면: <strong id="detected-side" style="color: var(--accent-volt); margin-left: 4px;">--</strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- Start & Permissions Overlay -->
+      <div class="start-modal" id="start-modal">
+        <div class="modal-box">
+          <div class="modal-icon">🏋️</div>
+          <h2 class="modal-title">스쿼트 AI 코칭 시작</h2>
+          <p class="modal-desc">
+            스마트폰/노트북 웹캠을 통해 실시간으로 자세를 분석하며,<br>
+            자세 불량 시 <strong>경고 비프음 & 음성</strong>을, 성공 시 <strong>칭찬 멘트</strong>를 제공합니다.
+          </p>
+
+          <div class="guide-tags">
+            <div class="guide-item">
+              <span>📐</span>
+              <span><strong>측면 45°~90° 각도</strong>로 카메라를 배치하세요.</span>
+            </div>
+            <div class="guide-item">
+              <span>👤</span>
+              <span><strong>머리부터 발끝까지</strong> 전신이 화면에 들어와야 합니다.</span>
+            </div>
+            <div class="guide-item">
+              <span>🔊</span>
+              <span>오디오(경고음 및 칭찬 TTS)가 활성화됩니다.</span>
+            </div>
+          </div>
+
+          <button class="btn-start" id="btn-start-workout">
+            <span>운동 시작 및 카메라 켜기</span>
+            <span>→</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Controls & Session Stats -->
+    <div class="control-deck">
+      <div class="deck-stats">
+        <div class="stat-badge">
+          <span>성공 렙수:</span>
+          <strong id="stat-success" style="color: var(--accent-neon);">0</strong>
+        </div>
+        <div class="stat-badge">
+          <span>깊이 부족(Half):</span>
+          <strong id="stat-half" style="color: var(--warning-orange);">0</strong>
+        </div>
+        <div class="stat-badge">
+          <span>상체 과숙임:</span>
+          <strong id="stat-lean" style="color: var(--warning-red);">0</strong>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 8px;">
+        <button class="audio-toggle-btn" id="btn-test-sound">
+          <span>🔊 사운드 테스트</span>
+        </button>
+        <button class="audio-toggle-btn" id="btn-reset-session">
+          <span>🔄 리셋</span>
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    /* =====================================================================
+       1. Audio Feedback Engine (Web Audio API Synthesizer & SpeechSynthesis)
+       ===================================================================== */
+    let audioCtx = null;
+
+    // Web Audio API 초기화 (유저 제스처 후 호출)
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
+    // 280Hz -> 140Hz 급감 Sawtooth 비프음 (0.25초)
+    function playWarningBeep() {
+      if (!audioCtx) return;
+      try {
+        const now = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(280, now);
+        osc.frequency.exponentialRampToValueAtTime(140, now + 0.25);
+
+        gain.gain.setValueAtTime(0.35, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        osc.start(now);
+        osc.stop(now + 0.25);
+      } catch (err) {
+        console.error('Audio playback error:', err);
+      }
+    }
+
+    // Web Speech API (TTS) 
+    const praisePhrases = [
+      "완벽한 자세예요!",
+      "좋은 깊이입니다!",
+      "아주 훌륭해요!",
+      "자세 유지 좋아요!",
+      "나이스 스쿼트!"
+    ];
+
+    let lastSpeechTime = 0;
+
+    function speakText(text, priority = false) {
+      if (!('speechSynthesis' in window)) return;
+
+      const now = Date.now();
+      if (!priority && now - lastSpeechTime < 1800) {
+        return; // 너무 잦은 음성 중첩 방지
+      }
+      lastSpeechTime = now;
+
+      window.speechSynthesis.cancel(); // 이전 음성 정리
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'ko-KR';
+      utterance.rate = 1.15; // 1.15x 속도로 경쾌하게
+      utterance.pitch = 1.0;
+      window.speechSynthesis.speak(utterance);
+    }
+
+    /* =====================================================================
+       2. Math & Biomechanics Calculation
+       ===================================================================== */
+    // 2D atan2 기반 사잇각 공식
+    function calculateAngle(A, B, C) {
+      const radians = Math.atan2(C.y - B.y, C.x - B.x) - Math.atan2(A.y - B.y, A.x - B.x);
+      let angle = Math.abs((radians * 180.0) / Math.PI);
+      if (angle > 180.0) {
+        angle = 360.0 - angle;
+      }
+      return angle;
+    }
+
+    // 5프레임 이동 평균 필터
+    class MovingAverageFilter {
+      constructor(size = 5) {
+        this.size = size;
+        this.history = [];
+      }
+      add(val) {
+        this.history.push(val);
+        if (this.history.length > this.size) {
+          this.history.shift();
+        }
+        const sum = this.history.reduce((a, b) => a + b, 0);
+        return sum / this.history.length;
+      }
+      reset() {
+        this.history = [];
+      }
+    }
+
+    const kneeFilter = new MovingAverageFilter(5);
+    const hipFilter = new MovingAverageFilter(5);
+
+    /* =====================================================================
+       3. Squat State Machine & Rules
+       ===================================================================== */
+    const SquatState = {
+      UP: 'UP',                   // 기립 (> 160°)
+      GOING_DOWN: 'GOING_DOWN',   // 하강 중 (< 130°)
+      DOWN: 'DOWN'                // 유효 깊이 도달 (<= 95°)
+    };
+
+    let currentState = SquatState.UP;
+    let repsCount = 0;
+    let successCount = 0;
+    let halfSquatCount = 0;
+    let forwardLeanCount = 0;
+
+    let minKneeAngleInRep = 180;
+    let warningTriggeredInCurrentRep = false;
+    let warningTypeInCurrentRep = null; // 'LEAN' | 'HALF'
+
+    function updateSquatFSM(kneeAngle, hipAngle) {
+      minKneeAngleInRep = Math.min(minKneeAngleInRep, kneeAngle);
+
+      switch (currentState) {
+        case SquatState.UP:
+          updateUIState('스탠딩 (준비)', 'active');
+          if (kneeAngle < 130) {
+            currentState = SquatState.GOING_DOWN;
+            minKneeAngleInRep = kneeAngle;
+            warningTriggeredInCurrentRep = false;
+            warningTypeInCurrentRep = null;
+            updateUIState('하강 중...', 'active');
+            showBanner('자세를 유지하며 깊게 앉으세요', '');
+          }
+          break;
+
+        case SquatState.GOING_DOWN:
+          // 하단 깊이 (<= 95°) 진입 체크
+          if (kneeAngle <= 95) {
+            currentState = SquatState.DOWN;
+            updateUIState('최저점 도달!', 'active');
+
+            // 하단에서 상체 과숙임 체크 (Hip Angle < 55°)
+            if (hipAngle < 55 && !warningTriggeredInCurrentRep) {
+              warningTriggeredInCurrentRep = true;
+              warningTypeInCurrentRep = 'LEAN';
+              forwardLeanCount++;
+              updateStats();
+              playWarningBeep();
+              showBanner('⚠️ 상체를 세우세요! (가슴 펴기)', 'warning');
+              speakText('가슴을 펴세요', true);
+            } else {
+              showBanner('좋은 깊이입니다! 그대로 기립하세요', 'success');
+            }
+          }
+          // 깊이 미달 상태에서 다시 기립해버린 경우 (Half Squat 감지)
+          else if (kneeAngle > 155) {
+            currentState = SquatState.UP;
+            halfSquatCount++;
+            updateStats();
+            playWarningBeep();
+            showBanner('⚠️ 가동 범위 부족 (더 깊게 앉으세요)', 'warning');
+            speakText('더 깊게 앉으세요', true);
+            minKneeAngleInRep = 180;
+          }
+          break;
+
+        case SquatState.DOWN:
+          // 다시 상체 과숙임 실시간 감지
+          if (hipAngle < 55 && !warningTriggeredInCurrentRep) {
+            warningTriggeredInCurrentRep = true;
+            warningTypeInCurrentRep = 'LEAN';
+            forwardLeanCount++;
+            updateStats();
+            playWarningBeep();
+            showBanner('⚠️ 상체를 세우세요! (가슴 펴기)', 'warning');
+            speakText('가슴을 펴세요', true);
+          }
+
+          // 기립 완료 (> 160°)
+          if (kneeAngle > 160) {
+            currentState = SquatState.UP;
+            repsCount++;
+            document.getElementById('hud-reps').textContent = repsCount;
+
+            if (!warningTriggeredInCurrentRep) {
+              // 완벽한 1회 성공!
+              successCount++;
+              updateStats();
+              const randomPraise = praisePhrases[Math.floor(Math.random() * praisePhrases.length)];
+              showBanner(`🎉 렙 ${repsCount} 완료: ${randomPraise}`, 'success');
+              speakText(`${repsCount}! ${randomPraise}`);
+            } else {
+              // 오류가 있었던 렙
+              showBanner(`렙 ${repsCount} 완료 (자세 보완 필요)`, 'warning');
+            }
+
+            minKneeAngleInRep = 180;
+          }
+          break;
+      }
+    }
+
+    /* =====================================================================
+       4. UI Manipulation Helpers
+       ===================================================================== */
+    const bannerEl = document.getElementById('feedback-banner');
+    const hudKneeEl = document.getElementById('hud-knee-angle');
+    const hudHipEl = document.getElementById('hud-hip-angle');
+    const hudStateEl = document.getElementById('hud-state');
+    const detectedSideEl = document.getElementById('detected-side');
+    const trackingDotEl = document.getElementById('tracking-status-dot');
+    const trackingTextEl = document.getElementById('tracking-status-text');
+
+    function showBanner(text, type = '') {
+      bannerEl.textContent = text;
+      bannerEl.className = 'feedback-banner ' + type;
+    }
+
+    function updateUIState(text, dotClass = 'active') {
+      hudStateEl.textContent = text;
+      trackingDotEl.className = 'status-dot ' + dotClass;
+    }
+
+    function updateStats() {
+      document.getElementById('stat-success').textContent = successCount;
+      document.getElementById('stat-half').textContent = halfSquatCount;
+      document.getElementById('stat-lean').textContent = forwardLeanCount;
+    }
+
+    /* =====================================================================
+       5. MediaPipe Pose & Skeleton Drawing
+       ===================================================================== */
+    const videoElement = document.getElementById('webcam-video');
+    const canvasElement = document.getElementById('output-canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+
+    // Pose 인덱스 상수
+    const POSE = {
+      LEFT_SHOULDER: 11,
+      RIGHT_SHOULDER: 12,
+      LEFT_HIP: 23,
+      RIGHT_HIP: 24,
+      LEFT_KNEE: 25,
+      RIGHT_KNEE: 26,
+      LEFT_ANKLE: 27,
+      RIGHT_ANKLE: 28,
+    };
+
+    function onPoseResults(results) {
+      // 캔버스 크기 동기화
+      if (canvasElement.width !== videoElement.videoWidth && videoElement.videoWidth > 0) {
+        canvasElement.width = videoElement.videoWidth;
+        canvasElement.height = videoElement.videoHeight;
+      }
+
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+      if (!results.poseLandmarks) {
+        trackingTextEl.textContent = '인물 인식 중...';
+        trackingDotEl.className = 'status-dot';
+        canvasCtx.restore();
+        return;
+      }
+
+      trackingTextEl.textContent = '자세 추적 중';
+      trackingDotEl.className = 'status-dot active';
+
+      const lm = results.poseLandmarks;
+
+      // 좌/우 가시성(Visibility) 비교하여 카메라에 더 잘 노출된 측면 자동 선택
+      const leftVis = (lm[POSE.LEFT_SHOULDER].visibility + lm[POSE.LEFT_HIP].visibility + lm[POSE.LEFT_KNEE].visibility + lm[POSE.LEFT_ANKLE].visibility) / 4;
+      const rightVis = (lm[POSE.RIGHT_SHOULDER].visibility + lm[POSE.RIGHT_HIP].visibility + lm[POSE.RIGHT_KNEE].visibility + lm[POSE.RIGHT_ANKLE].visibility) / 4;
+
+      const isRightSide = rightVis > leftVis;
+      detectedSideEl.textContent = isRightSide ? '우측면 (Right)' : '좌측면 (Left)';
+
+      const shoulder = isRightSide ? lm[POSE.RIGHT_SHOULDER] : lm[POSE.LEFT_SHOULDER];
+      const hip = isRightSide ? lm[POSE.RIGHT_HIP] : lm[POSE.LEFT_HIP];
+      const knee = isRightSide ? lm[POSE.RIGHT_KNEE] : lm[POSE.LEFT_KNEE];
+      const ankle = isRightSide ? lm[POSE.RIGHT_ANKLE] : lm[POSE.LEFT_ANKLE];
+
+      // 각도 계산
+      const rawKneeAngle = calculateAngle(hip, knee, ankle);
+      const rawHipAngle = calculateAngle(shoulder, hip, knee);
+
+      const smoothKneeAngle = Math.round(kneeFilter.add(rawKneeAngle));
+      const smoothHipAngle = Math.round(hipFilter.add(rawHipAngle));
+
+      // HUD 표시 갱신
+      hudKneeEl.textContent = smoothKneeAngle;
+      hudHipEl.textContent = smoothHipAngle;
+
+      // 스쿼트 상태 머신 업데이트
+      updateSquatFSM(smoothKneeAngle, smoothHipAngle);
+
+      // 관절 스켈레톤 라인 렌더링
+      const width = canvasElement.width;
+      const height = canvasElement.height;
+
+      const pShoulder = { x: shoulder.x * width, y: shoulder.y * height };
+      const pHip = { x: hip.x * width, y: hip.y * height };
+      const pKnee = { x: knee.x * width, y: knee.y * height };
+      const pAnkle = { x: ankle.x * width, y: ankle.y * height };
+
+      // 상체 과숙임 상태에 따라 라인 컬러 하이라이트
+      const isLeaning = smoothHipAngle < 55 && currentState === SquatState.DOWN;
+      const trunkColor = isLeaning ? '#ff334b' : '#00ff88';
+      const legColor = (currentState === SquatState.DOWN) ? '#d2ff00' : '#00ff88';
+
+      // 1. 몸통 (Shoulder -> Hip)
+      drawBone(pShoulder, pHip, trunkColor, 6);
+      // 2. 대퇴부 (Hip -> Knee)
+      drawBone(pHip, pKnee, legColor, 6);
+      // 3. 종아리 (Knee -> Ankle)
+      drawBone(pKnee, pAnkle, legColor, 6);
+
+      // 관절 조인트 포인트 원형 렌더링
+      [pShoulder, pHip, pKnee, pAnkle].forEach((p, idx) => {
+        canvasCtx.beginPath();
+        canvasCtx.arc(p.x, p.y, 7, 0, 2 * Math.PI);
+        canvasCtx.fillStyle = '#ffffff';
+        canvasCtx.fill();
+        canvasCtx.lineWidth = 3;
+        canvasCtx.strokeStyle = idx <= 1 && isLeaning ? '#ff334b' : '#121824';
+        canvasCtx.stroke();
+      });
+
+      canvasCtx.restore();
+    }
+
+    function drawBone(p1, p2, color, thickness) {
+      canvasCtx.beginPath();
+      canvasCtx.moveTo(p1.x, p1.y);
+      canvasCtx.lineTo(p2.x, p2.y);
+      canvasCtx.lineWidth = thickness;
+      canvasCtx.strokeStyle = color;
+      canvasCtx.lineCap = 'round';
+      canvasCtx.shadowColor = color;
+      canvasCtx.shadowBlur = 10;
+      canvasCtx.stroke();
+      canvasCtx.shadowBlur = 0; // reset
+    }
+
+    /* =====================================================================
+       6. Initialization & Camera Pipeline
+       ===================================================================== */
+    let poseDetector = null;
+    let cameraInstance = null;
+
+    async function startCameraAndPose() {
+      initAudio();
+
+      poseDetector = new Pose({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
+      });
+
+      poseDetector.setOptions({
+        modelComplexity: 1,
+        smoothLandmarks: true,
+        enableSegmentation: false,
+        smoothSegmentation: false,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6,
+      });
+
+      poseDetector.onResults(onPoseResults);
+
+      cameraInstance = new Camera(videoElement, {
+        onFrame: async () => {
+          await poseDetector.send({ image: videoElement });
+        },
+        width: 1280,
+        height: 720,
+      });
+
+      await cameraInstance.start();
+
+      // 모달 닫기
+      document.getElementById('start-modal').classList.add('hidden');
+      showBanner('운동 준비 완료! 천천히 스쿼트를 시작하세요', '');
+      speakText('스쿼트 모션 코칭을 시작합니다. 준비되시면 앉아주세요.');
+    }
+
+    // Event Listeners
+    document.getElementById('btn-start-workout').addEventListener('click', () => {
+      startCameraAndPose().catch(err => {
+        alert('카메라 접근 권한을 허용해 주세요: ' + err.message);
+      });
+    });
+
+    document.getElementById('btn-test-sound').addEventListener('click', () => {
+      initAudio();
+      playWarningBeep();
+      setTimeout(() => {
+        speakText('완벽한 자세예요!');
+      }, 350);
+    });
+
+    document.getElementById('btn-reset-session').addEventListener('click', () => {
+      repsCount = 0;
+      successCount = 0;
+      halfSquatCount = 0;
+      forwardLeanCount = 0;
+      currentState = SquatState.UP;
+      minKneeAngleInRep = 180;
+      kneeFilter.reset();
+      hipFilter.reset();
+      document.getElementById('hud-reps').textContent = '0';
+      hudKneeEl.textContent = '--';
+      hudHipEl.textContent = '--';
+      updateStats();
+      showBanner('세션이 초기화되었습니다', '');
+    });
+  </script>
+</body>
+</html>
